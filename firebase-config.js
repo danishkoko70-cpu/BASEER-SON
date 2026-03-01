@@ -10,11 +10,11 @@
 //   appId: "XXXX"
 // };
 
-rules_version = '2';
-service cloud.firestore {
-match /databases/{database}/documents {
-match /{document=**} {
-allow read, write: if true;
-}
-}
-}
+export const firebaseConfig = {
+  apiKey: "AIzaSyA56EPHUBYE-Je3B63QtA2hiYN4Ejiqync",
+  authDomain: "baseerandsons-7f782.firebaseapp.com",
+  projectId: "baseerandsons-7f782",
+  storageBucket: "baseerandsons-7f782.firebasestorage.app",
+  messagingSenderId: "925520673483",
+  appId: "1:925520673483:web:1a0004f122e905ea61794e"
+};
