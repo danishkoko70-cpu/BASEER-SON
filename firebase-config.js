@@ -10,4 +10,11 @@
 //   appId: "XXXX"
 // };
 
-export const firebaseConfig = null; // <-- replace null with your config object
+export const firebaseConfig = {
+  apiKey: "XXXX",
+  authDomain: "XXXX.firebaseapp.com",
+  projectId: "XXXX",
+  storageBucket: "XXXX.appspot.com",
+  messagingSenderId: "XXXX",
+  appId: "XXXX"
+};
