@@ -10,4 +10,12 @@
 //   appId: "XXXX"
 // };
 
-export const firebaseConfig = null; // <-- replace null with your config object
+export const firebaseConfig = {
+  apiKey: "AIzaSyD3r2RJOjFZILkdEk6usexgW7YoVtzmcOw",
+  authDomain: "baseerandsons.firebaseapp.com",
+  projectId: "baseerandsons",
+  storageBucket: "baseerandsons.firebasestorage.app",
+  messagingSenderId: "100845743654",
+  appId: "1:100845743654:web:7067f1f6e205f568c440e7",
+  measurementId: "G-L9TK8Y26KJ"
+};
