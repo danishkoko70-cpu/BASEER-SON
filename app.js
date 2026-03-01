@@ -13,6 +13,40 @@ import {
 (function () {
   "use strict";
 
+  // ---------- PWA (Install button + offline cache) ----------
+  // Register Service Worker for offline caching (required for install prompt on many browsers)
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch(console.error);
+    });
+  }
+
+  // Show install button when the browser allows installation (Chrome/Edge)
+  let deferredInstallPrompt = null;
+  const installBtn = document.getElementById("btnInstall");
+  window.addEventListener("beforeinstallprompt", (e) => {
+    // Prevent mini-infobar
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (installBtn) installBtn.hidden = false;
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener("click", async () => {
+      if (!deferredInstallPrompt) return;
+      installBtn.disabled = true;
+      deferredInstallPrompt.prompt();
+      try {
+        await deferredInstallPrompt.userChoice;
+      } finally {
+        deferredInstallPrompt = null;
+        installBtn.hidden = true;
+        installBtn.disabled = false;
+      }
+    });
+  }
+
+
   // ---------- Utilities ----------
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -861,6 +895,204 @@ import {
   function renderExpenses(){ setActive("expenses"); render(transactionsPage("expense","Expenses","Record business expenses.")); bindTransactionPage("expense"); }
   function renderCash(){ setActive("cash"); render(transactionsPage("cash","Cashbook","Cash In/Out entries (receipts & payments).")); bindTransactionPage("cash"); }
 
+
+// ---------- Statements (Client/Vendor Ledger) ----------
+function buildStatement(kind, partyId, fromDate, toDate) {
+  const isClient = kind === "client";
+  const partyType = isClient ? "client" : "vendor";
+
+  const inRange = (d) => {
+    if (fromDate && d < fromDate) return false;
+    if (toDate && d > toDate) return false;
+    return true;
+  };
+
+  const lines = [];
+  // Opening balance adjusted with transactions BEFORE fromDate (if provided)
+  let opening = openingBalance(partyType, partyId);
+
+  const applyToOpening = (t) => {
+    if (isClient) {
+      if (t.type === "sale") opening += safeNum(t.amount) - safeNum(t.paid);
+      if (t.type === "cash_in") opening -= safeNum(t.amount);
+    } else {
+      if (t.type === "purchase") opening += safeNum(t.amount) - safeNum(t.paid);
+      if (t.type === "cash_out") opening -= safeNum(t.amount);
+    }
+  };
+
+  if (fromDate) {
+    for (const t of state.ledger) {
+      if (t.partyType !== partyType || t.partyId !== partyId) continue;
+      if (!t.date || t.date >= fromDate) continue;
+      applyToOpening(t);
+    }
+  }
+
+  for (const t of state.ledger) {
+    if (t.partyType !== partyType || t.partyId !== partyId) continue;
+    if (!t.date || !inRange(t.date)) continue;
+
+    if (isClient) {
+      if (t.type === "sale") {
+        lines.push({ date: t.date, entry: "Sale (Invoice)", ref: t.ref || "", desc: t.desc || "", debit: safeNum(t.amount), credit: 0 });
+        if (safeNum(t.paid) > 0) lines.push({ date: t.date, entry: "Receipt (On Invoice)", ref: t.ref || "", desc: t.method ? `Method: ${t.method}` : "", debit: 0, credit: safeNum(t.paid) });
+      }
+      if (t.type === "cash_in") {
+        lines.push({ date: t.date, entry: "Receipt", ref: t.ref || "", desc: t.desc || (t.method ? `Method: ${t.method}` : ""), debit: 0, credit: safeNum(t.amount) });
+      }
+    } else {
+      if (t.type === "purchase") {
+        lines.push({ date: t.date, entry: "Purchase (Bill)", ref: t.ref || "", desc: t.desc || "", debit: safeNum(t.amount), credit: 0 });
+        if (safeNum(t.paid) > 0) lines.push({ date: t.date, entry: "Payment (On Bill)", ref: t.ref || "", desc: t.method ? `Method: ${t.method}` : "", debit: 0, credit: safeNum(t.paid) });
+      }
+      if (t.type === "cash_out") {
+        lines.push({ date: t.date, entry: "Payment", ref: t.ref || "", desc: t.desc || (t.method ? `Method: ${t.method}` : ""), debit: 0, credit: safeNum(t.amount) });
+      }
+    }
+  }
+
+  lines.sort((a,b) => (a.date||"").localeCompare(b.date||"") || (a.entry||"").localeCompare(b.entry||""));
+  let bal = opening;
+  const rows = lines.map(x => { bal = bal + safeNum(x.debit) - safeNum(x.credit); return { ...x, balance: bal }; });
+  return { opening, rows, closing: bal };
+}
+
+function renderStatements() {
+  setActive("statements");
+  render(`
+    <div class="row space">
+      <div>
+        <h1>Statements</h1>
+        <div class="muted">Client/Vendor ledger like bank statement (invoice + multiple payments).</div>
+      </div>
+      <div class="row">
+        <button class="btn small" id="btnPrintStmt">Print</button>
+        <button class="btn small ghost" id="btnExportStmt">Export CSV</button>
+      </div>
+    </div>
+
+    <section class="card section">
+      <h2>Filter</h2>
+      <div class="grid2">
+        <label>Type
+          <select id="stmtKind">
+            <option value="client">Client (Receivable)</option>
+            <option value="vendor">Vendor (Payable)</option>
+          </select>
+        </label>
+        <label>Party
+          <select id="stmtParty"></select>
+        </label>
+        <label>From Date
+          <input id="stmtFrom" type="date" />
+        </label>
+        <label>To Date
+          <input id="stmtTo" type="date" />
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btnRunStmt">Show Statement</button>
+        <span class="muted tiny">Tip: Use same Ref (e.g., S-001) for multiple receipts/payments.</span>
+      </div>
+    </section>
+
+    <section class="card section" id="stmtResult">
+      <div class="muted">Select a party and click <b>Show Statement</b>.</div>
+    </section>
+  `);
+
+  const kindSel = $("#stmtKind");
+  const partySel = $("#stmtParty");
+  const fromInp = $("#stmtFrom");
+  const toInp = $("#stmtTo");
+  const res = $("#stmtResult");
+  let lastCSV = null;
+
+  function fillPartyOptions(kind) {
+    const list = kind === "client" ? state.clients : state.vendors;
+    partySel.innerHTML = list.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+    if (!list.length) partySel.innerHTML = `<option value="">(No ${kind}s)</option>`;
+  }
+
+  function renderTable(kind, partyId, fromDate, toDate) {
+    if (!partyId) { res.innerHTML = `<div class="muted">No party selected.</div>`; return; }
+    const partyType = kind === "client" ? "client" : "vendor";
+    const pName = partyName(partyType, partyId);
+    const st = buildStatement(kind, partyId, fromDate, toDate);
+    const labelBal = kind === "client" ? "Receivable Balance" : "Payable Balance";
+    lastCSV = { party: pName, opening: st.opening, rows: st.rows };
+
+    res.innerHTML = `
+      <div class="row space">
+        <div>
+          <h2 style="margin:0 0 6px">${escapeHtml(pName)} — ${kind === "client" ? "Client" : "Vendor"}</h2>
+          <div class="muted tiny">Entries: ${st.rows.length} ${fromDate ? `from <b>${fromDate}</b>` : ""} ${toDate ? `to <b>${toDate}</b>` : ""}</div>
+        </div>
+        <div class="badge">${labelBal}: <b>${money(st.closing)} ${state.company.currency}</b></div>
+      </div>
+      <hr class="sep"/>
+      <div class="row">
+        <div class="badge">Opening: <b>${money(st.opening)} ${state.company.currency}</b></div>
+        <div class="badge">Closing: <b>${money(st.closing)} ${state.company.currency}</b></div>
+      </div>
+      <div style="margin-top:10px">
+        ${st.rows.length ? `
+        <table class="table">
+          <thead>
+            <tr><th>Date</th><th>Entry</th><th>Ref</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+          </thead>
+          <tbody>
+            ${st.rows.map(r => `
+              <tr>
+                <td>${r.date}</td>
+                <td>${escapeHtml(r.entry)}</td>
+                <td><span class="badge" style="font-family:var(--mono)">${escapeHtml(r.ref||"-")}</span></td>
+                <td>${escapeHtml(r.desc||"-")}</td>
+                <td>${money(r.debit)} ${state.company.currency}</td>
+                <td>${money(r.credit)} ${state.company.currency}</td>
+                <td><b>${money(r.balance)} ${state.company.currency}</b></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+        ` : `<div class="muted">No entries in this date range.</div>`}
+      </div>
+    `;
+  }
+
+  function run() {
+    renderTable(kindSel.value, partySel.value, fromInp.value || "", toInp.value || "");
+  }
+
+  kindSel.addEventListener("change", () => { fillPartyOptions(kindSel.value); res.innerHTML = `<div class="muted">Select a party and click <b>Show Statement</b>.</div>`; });
+  $("#btnRunStmt").addEventListener("click", run);
+  $("#btnPrintStmt").addEventListener("click", () => window.print());
+
+  $("#btnExportStmt").addEventListener("click", () => {
+    if (!lastCSV) return alert("Open a statement first.");
+    const header = ["date","entry","ref","desc","debit","credit","balance"];
+    const lines = [header.join(",")];
+    lines.push([ "", "OPENING", "", "", "", "", safeNum(lastCSV.opening) ].join(","));
+    for (const r of lastCSV.rows) {
+      lines.push([
+        r.date,
+        `"${String(r.entry||"").replaceAll('"','""')}"`,
+        `"${String(r.ref||"").replaceAll('"','""')}"`,
+        `"${String(r.desc||"").replaceAll('"','""')}"`,
+        safeNum(r.debit),
+        safeNum(r.credit),
+        safeNum(r.balance)
+      ].join(","));
+    }
+    const stamp = new Date().toISOString().slice(0,10);
+    const safeName = String(lastCSV.party||"statement").replaceAll(" ","_");
+    download(`statement-${safeName}-${stamp}.csv`, lines.join("\n"), "text/csv");
+  });
+
+  fillPartyOptions("client");
+}
+
   // ---------- Reports & Settings ----------
   function renderReports() {
     setActive("reports");
@@ -1044,6 +1276,7 @@ import {
     if (path === "cash") return renderCash();
     if (path === "reports") return renderReports();
     if (path === "settings") return renderSettings();
+    if (path === "statements") return renderStatements();
 
     location.hash = "#/dashboard";
   }

@@ -6,6 +6,8 @@
   <title>Business Finance (Firebase Sync)</title>
   <link rel="stylesheet" href="./app.css" />
   <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="manifest" href="./manifest.webmanifest">
 </head>
 <body>
   <div id="app">
@@ -20,6 +22,7 @@
       <div class="top-actions">
         <span class="badge" id="syncBadge">Sync: …</span>
         <button class="btn" id="btnExport" title="Download your data as JSON">Export</button>
+        <button class="btn small ghost" id="btnInstall" hidden title="Install this app">Install</button>
         <label class="btn ghost" for="importFile" title="Import JSON backup">Import</label>
         <input id="importFile" type="file" accept="application/json" hidden />
         <button class="btn ghost" id="btnReset" title="Reset to empty (careful)">Reset</button>
@@ -33,6 +36,7 @@
           <a href="#/dashboard" class="nav-link" data-route="dashboard">Dashboard</a>
           <a href="#/clients" class="nav-link" data-route="clients">Clients (Receivable)</a>
           <a href="#/vendors" class="nav-link" data-route="vendors">Vendors (Payable)</a>
+          <a href="#/statements" class="nav-link" data-route="statements">Statements</a>
           <a href="#/sales" class="nav-link" data-route="sales">Sales</a>
           <a href="#/purchases" class="nav-link" data-route="purchases">Purchases</a>
           <a href="#/expenses" class="nav-link" data-route="expenses">Expenses</a>
